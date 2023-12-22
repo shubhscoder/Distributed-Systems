@@ -56,6 +56,9 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
+// Following things are done as part of this RPC
+// 1. Add the worker to the worker channel
+// 2. Add the worker to the alive map
 func (c *Coordinator) RegisterWorker(args *RegisterWorkerArgs, reply *RegisterWorkerReply) error {
 	c.worker_alive_mut.Lock()
 	defer c.worker_alive_mut.Unlock()
@@ -90,6 +93,7 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
+// Function to send and handle a reduce task.
 func (c *Coordinator) SendReduceTask(worker string, red_task ReduceTask) {
 	args := ReduceTaskArgs{}
 	reply := ReduceTaskReply{}
@@ -115,6 +119,7 @@ func (c *Coordinator) SendReduceTask(worker string, red_task ReduceTask) {
 	}
 }
 
+// Function to send and handle a reduce task.
 func (c *Coordinator) SendMapTask(worker string, task Task) {
 	args := MapTaskArgs{}
 	reply := MapTaskReply{}
@@ -162,6 +167,7 @@ func rpccall(client *rpc.Client, method string, args interface{}, reply interfac
 	return errCh
 }
 
+// This function sets a timeout of 10 seconds on a RPC. This is a required to handle slow workers and worker failures.
 func (c *Coordinator) callWrapper(rpcname string, worker string, args interface{}, reply interface{}) bool {
 	client, err := rpc.DialHTTP("unix", worker)
 	if err != nil {
@@ -209,14 +215,6 @@ func (c *Coordinator) Scheduler() {
 
 	// fmt.Printf("REDUCE phase done.\n")
 
-	// for key, _ := range c.worker_alive {
-	// 	fmt.Printf("Shutting worker : %s\n", key)
-	// 	args := DoneTaskArg{}
-	// 	reply := DoneTaskReply{}
-
-	// 	// Ignore any errors in done call.
-	// 	c.callWrapper("WorkerData.DoneTask", key, &args, &reply)
-	// }
 	flag := 0
 	for {
 		if flag == 1 {
