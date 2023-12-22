@@ -75,6 +75,7 @@ func (w *WorkerData) signalDone() {
 }
 
 func (w *WorkerData) DoneTask(args *DoneTaskArg, reply *DoneTaskReply) error {
+	fmt.Printf("Exiting : %s", strconv.Itoa(os.Getpid()))
 	defer w.signalDone()
 	return nil
 }
@@ -153,6 +154,11 @@ func (w *WorkerData) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) er
 	}
 
 	ofile.Close()
+	// Once all output files are produced, remove the intermediate files.
+	for _, file := range args.Intermediate {
+		// Ignore any errors during deletion
+		os.Remove(file)
+	}
 
 	// fmt.Printf("Done create output file oname : %s\n", oname)
 
@@ -175,8 +181,6 @@ func (w *WorkerData) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 				return fmt.Errorf(err_msg)
 			}
 		}
-
-		reply.Intermidate = append(reply.Intermidate, fname)
 
 		file, err := os.Create(fname)
 		if err != nil {
@@ -226,6 +230,7 @@ func (w *WorkerData) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 		old_name := "mr-" + strconv.Itoa(os.Getpid()) + "-" + strconv.Itoa(int(args.Shard)) + "-" + strconv.Itoa(int(i))
 		new_name := "mr-" + strconv.Itoa(int(args.Shard)) + "-" + strconv.Itoa(int(i))
 		err := os.Rename(old_name, new_name)
+		reply.Intermidate = append(reply.Intermidate, new_name)
 		if err != nil {
 			err_msg := fmt.Sprintf("Failed to rename file %s to %s", old_name, new_name)
 			reply.Err = getError(kFailedRename, err_msg)
@@ -257,6 +262,8 @@ func Worker(mapf func(string, string) []KeyValue,
 		// fmt.Printf("Done registration\n")
 	} else {
 		fmt.Printf("call failed!\n")
+		// If registration has failed, nothing can be done and code should exit.
+		worker_obj.donechan <- true
 	}
 
 	// Your worker implementation here.

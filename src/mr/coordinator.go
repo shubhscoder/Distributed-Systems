@@ -38,6 +38,7 @@ type Coordinator struct {
 	mapcomplete      int32
 	reducecomplete   int32
 	intermediate     [][]string
+	intermediate_mut []sync.Mutex
 	worker_alive     map[string]bool
 	donechan         chan bool
 	worker_alive_mut sync.Mutex
@@ -68,6 +69,7 @@ func (c *Coordinator) InitalizeState() {
 	c.tasks = make(chan Task, MAX_TASKS)
 	c.reduce_tasks = make(chan ReduceTask, MAX_TASKS)
 	c.intermediate = make([][]string, c.nReduce)
+	c.intermediate_mut = make([]sync.Mutex, c.nReduce)
 	c.worker_alive = make(map[string]bool)
 	c.donechan = make(chan bool)
 }
@@ -105,7 +107,9 @@ func (c *Coordinator) SendReduceTask(worker string, red_task ReduceTask) {
 			close(c.reduce_tasks)
 		}
 	} else {
+		c.worker_alive_mut.Lock()
 		c.worker_alive[worker] = false
+		c.worker_alive_mut.Unlock()
 		// fmt.Println("Task %s failed", red_task.ID)
 		c.reduce_tasks <- red_task
 	}
@@ -123,7 +127,9 @@ func (c *Coordinator) SendMapTask(worker string, task Task) {
 		// fmt.Println("Task %s completed", task.fname)
 		c.workers <- worker
 		for i, fname := range reply.Intermidate {
+			c.intermediate_mut[i].Lock()
 			c.intermediate[i] = append(c.intermediate[i], fname)
+			c.intermediate_mut[i].Unlock()
 		}
 
 		atomic.AddInt32(&c.mapcomplete, 1)
@@ -137,7 +143,9 @@ func (c *Coordinator) SendMapTask(worker string, task Task) {
 		}
 
 	} else {
+		c.worker_alive_mut.Lock()
 		c.worker_alive[worker] = false
+		c.worker_alive_mut.Unlock()
 		// fmt.Println("Task %s failed", task.fname)
 		c.tasks <- task
 	}
@@ -181,7 +189,7 @@ func (c *Coordinator) Scheduler() {
 	// Send the map tasks.
 	for task := range c.tasks {
 		worker := <-c.workers
-		c.SendMapTask(worker, task)
+		go c.SendMapTask(worker, task)
 	}
 
 	// fmt.Printf("MAP phase done.\n")
@@ -196,17 +204,41 @@ func (c *Coordinator) Scheduler() {
 
 	for red_task := range c.reduce_tasks {
 		worker := <-c.workers
-		c.SendReduceTask(worker, red_task)
+		go c.SendReduceTask(worker, red_task)
 	}
 
 	// fmt.Printf("REDUCE phase done.\n")
 
-	for key, _ := range c.worker_alive {
-		args := DoneTaskArg{}
-		reply := DoneTaskReply{}
+	// for key, _ := range c.worker_alive {
+	// 	fmt.Printf("Shutting worker : %s\n", key)
+	// 	args := DoneTaskArg{}
+	// 	reply := DoneTaskReply{}
 
-		// Ignore any errors in done call.
-		c.callWrapper("WorkerData.DoneTask", key, &args, &reply)
+	// 	// Ignore any errors in done call.
+	// 	c.callWrapper("WorkerData.DoneTask", key, &args, &reply)
+	// }
+	flag := 0
+	for {
+		if flag == 1 {
+			break
+		}
+		select {
+		case addr, ok := <-c.workers:
+			if !ok {
+				// fmt.Println("Worker channel closed, nothing to do")
+				flag = 1
+			} else {
+				args := DoneTaskArg{}
+				reply := DoneTaskReply{}
+
+				// Ignore any errors in done call.
+				// fmt.Printf("Sending done to %s\n", addr)
+				c.callWrapper("WorkerData.Done", addr, &args, &reply)
+			}
+		case <-time.After(2 * time.Second):
+			// fmt.Println("No more workers found.")
+			flag = 1
+		}
 	}
 
 	// fmt.Print("DONE signaling done.\n")
